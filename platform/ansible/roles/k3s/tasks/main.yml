@@ -10,6 +10,12 @@
     enabled: yes
     state: started
 
+- name: Create a directory if it doesn't exist
+  file:
+    path: /home/administrator/.kube/
+    state: directory
+    mode: '0755'
+
 - name: Copy Kubeconfig for the administrator user
   copy:
     src: /etc/rancher/k3s/k3s.yaml
