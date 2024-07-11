@@ -1,0 +1,173 @@
+def extractIpFromJson = { inputJson ->
+    def jsonSlurper = new groovy.json.JsonSlurper()
+    def jsonData = jsonSlurper.parseText(inputJson)
+    
+    def ipArray = jsonData.collect { it.ip }
+    return ipArray
+}
+
+pipeline {
+    agent any
+    environment {
+        GIT_HASH = GIT_COMMIT.take(8)
+        TFVARS="env/dev/tofu.tfvars"
+        SSH_CREDENTIALS_ID = "ssh-key-credential"
+        PROXMOX_CREDENITALS_ID = "proxmox-credentials"
+        REMOTE_HOME = "/home/administrator/"
+        CONSUL_CREDENTIAL_ID = "consul-sa-token"
+        DATABASE_CREDENTIAL_ID = "database-credentials"
+        SUPER_USER_ID = "secure-secret-superusers"
+        CONSUL_SERVER = "consul-prod.home"
+        INVENTORY_FILE= "inventory/openpki/inventory_dev.yaml"
+    }
+
+    stages {
+
+        stage('tofu Init') {
+            steps {
+                // Change directory to 'tofu' and initialize tofu
+                dir('platform/infra') {
+                    withCredentials([string(credentialsId: env.CONSUL_CREDENTIAL_ID, variable: 'CONSUL_HTTP_TOKEN')]) {
+                        sh """
+                        tofu init -backend-config="address=${env.CONSUL_SERVER}:8500"
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('tofu Plan') {
+            steps {
+                // Change directory to 'tofu' and plan the tofu changes
+                dir('platform/infra') {
+                    withCredentials([
+                        usernamePassword(credentialsId: env.PROXMOX_CREDENITALS_ID, usernameVariable: 'PROXMOX_TOKEN_ID', passwordVariable: 'PROXMOX_TOKEN_SECRET'),
+                        string(credentialsId: env.CONSUL_CREDENTIAL_ID, variable: 'CONSUL_HTTP_TOKEN')]) {
+                        sh """
+                        tofu plan -out=tfplan -var-file=${env.TFVARS} -var="proxmox_token_id=${PROXMOX_TOKEN_ID}" -var="proxmox_token_secret=${PROXMOX_TOKEN_SECRET}"
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('tofu Apply') {
+            steps {
+                // Change directory to 'tofu' and apply the planned changes
+                dir('platform/infra') {
+                    withCredentials([
+                        usernamePassword(credentialsId: env.PROXMOX_CREDENITALS_ID, usernameVariable: 'PROXMOX_TOKEN_ID', passwordVariable: 'PROXMOX_TOKEN_SECRET'),
+                        string(credentialsId: env.CONSUL_CREDENTIAL_ID, variable: 'CONSUL_HTTP_TOKEN')]) {
+                        sh """
+                        tofu apply -auto-approve -var-file=${env.TFVARS} -var="proxmox_token_id=${PROXMOX_TOKEN_ID}" -var="proxmox_token_secret=${PROXMOX_TOKEN_SECRET}"
+                        """
+                    }
+                    script {
+                        // Execute a shell command and capture its output
+                        withCredentials([string(credentialsId: env.CONSUL_CREDENTIAL_ID, variable: 'CONSUL_HTTP_TOKEN')]) {
+                            def lxc_ip = sh(script: 'tofu output -json lxc-ip', returnStdout: true).trim()
+                            def ipArray = extractIpFromJson(lxc_ip)
+                            echo "Extracted IPs: ${ipArray.join(', ')}"
+                            // Save the IP array to a file and stash it
+                            writeFile file: 'ip_array.txt', text: ipArray.join(',')
+                            stash includes: 'ip_array.txt', name: 'ip_array'                          
+                            sh """
+                            mv inventory_dev.yaml ../ansible/${env.INVENTORY_FILE}
+                            """
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Probe SSH Connection') {
+            steps {
+                script {
+                    // Unstash the file containing the IP array
+                    unstash 'ip_array'
+                    
+                    // Read the IP array from the file
+                    def ipArrayStr = readFile('ip_array.txt').trim()
+                    def ipArray = ipArrayStr.split(',')
+                    
+                    // Iterate over the IP array and process each IP
+                    ipArray.eachWithIndex { ip, index ->
+                        env.LXC_IP = ip.trim()
+                        echo "Processing IP [${index + 1}/${ipArray.size()}]: ${env.LXC_IP}"
+                        
+                        // Check if the IP is reachable
+                        def maxTime = 300 // 5 minutes in seconds
+                        def interval = 10 // 10 seconds
+                        def timeElapsed = 0
+                        def reachable = false
+                        
+                        while (timeElapsed < maxTime) {
+                            def result = sh(script: "nc -zv ${env.LXC_IP} 22", returnStatus: true)
+                            if (result == 0) {
+                                reachable = true
+                                break
+                            }
+                            sleep(interval)
+                            timeElapsed += interval
+                        }
+                        
+                        if (!reachable) {
+                            error "Host ${env.LXC_IP} is not reachable after ${maxTime} seconds"
+                        } else {
+                            echo "Host ${env.LXC_IP} is reachable"
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('run ansible') {
+            steps {
+                dir('platform/ansible') {
+                    sshagent([env.SSH_CREDENTIALS_ID]) {
+                        withCredentials([
+                            usernamePassword(credentialsId: env.PROXMOX_CREDENITALS_ID, usernameVariable: 'PROXMOX_TOKEN_ID', passwordVariable: 'PROXMOX_TOKEN_SECRET'),
+                            usernamePassword(credentialsId: env.DATABASE_CREDENTIAL_ID, usernameVariable: 'DB_USER', passwordVariable: 'DB_PASSWORD'),
+                            string(credentialsId: env.CONSUL_CREDENTIAL_ID, variable: 'CONSUL_HTTP_TOKEN'),
+                            string(credentialsId: env.SUPER_USER_ID, variable: 'ROOT_DB_PASS')]
+                            ) {
+                            sh """
+                            ansible-playbook -i ${INVENTORY_FILE} main.yml --extra-vars "root_pass_db=${ROOT_DB_PASS} user_db=${DB_USER} user_pass_db=${DB_PASSWORD}"
+                            """
+                        }
+                    }
+                }
+            }
+        }
+
+        // stage('tofu destroy') {
+        //     steps {
+        //         // Change directory to 'tofu' and apply the planned changes
+        //         dir('platform/infra') {
+        //             withCredentials([
+        //                 usernamePassword(credentialsId: env.PROXMOX_CREDENITALS_ID, usernameVariable: 'PROXMOX_TOKEN_ID', passwordVariable: 'PROXMOX_TOKEN_SECRET'),
+        //                 string(credentialsId: env.CONSUL_CREDENTIAL_ID, variable: 'CONSUL_HTTP_TOKEN')]) {
+        //                 sh """
+        //                 tofu destroy -auto-approve -var="proxmox_token_id=${PROXMOX_TOKEN_ID}" -var="proxmox_token_secret=${PROXMOX_TOKEN_SECRET}"
+        //                 """
+        //             }
+        //         }
+        //     }
+        // }
+    }
+
+    post {
+        always {
+            // Clean up workspace after the job is done
+            cleanWs()
+        }
+        success {
+            // Actions to perform when the job succeeds
+            echo 'tofu Apply successful!'
+        }
+        failure {
+            // Actions to perform when the job fails
+            echo 'tofu Apply failed!'
+        }
+    }
+}

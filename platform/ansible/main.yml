@@ -1,0 +1,7 @@
+---
+- name: Provision a database
+  hosts: k3s
+  become: yes
+  roles:
+    - common
+    - k3s
