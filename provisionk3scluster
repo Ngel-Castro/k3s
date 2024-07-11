@@ -129,10 +129,10 @@ pipeline {
                             usernamePassword(credentialsId: env.PROXMOX_CREDENITALS_ID, usernameVariable: 'PROXMOX_TOKEN_ID', passwordVariable: 'PROXMOX_TOKEN_SECRET'),
                             usernamePassword(credentialsId: env.DATABASE_CREDENTIAL_ID, usernameVariable: 'DB_USER', passwordVariable: 'DB_PASSWORD'),
                             string(credentialsId: env.CONSUL_CREDENTIAL_ID, variable: 'CONSUL_HTTP_TOKEN'),
-                            string(credentialsId: env.SUPER_USER_ID, variable: 'ROOT_DB_PASS')]
+                            string(credentialsId: env.SUPER_USER_ID, variable: 'ADMINISTRATOR_PASS')]
                             ) {
                             sh """
-                            ansible-playbook -i ${INVENTORY_FILE} main.yml --extra-vars "root_pass_db=${ROOT_DB_PASS} user_db=${DB_USER} user_pass_db=${DB_PASSWORD}"
+                            ansible-playbook -i ${INVENTORY_FILE} main.yml --extra-vars "administrator_pass=${ADMINISTRATOR_PASS}"
                             """
                         }
                     }

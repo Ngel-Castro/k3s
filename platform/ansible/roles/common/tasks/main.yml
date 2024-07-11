@@ -4,6 +4,24 @@
     update_cache: yes
   when: ansible_os_family == "Debian"
 
+- name: Create administrator user
+  user:
+    name: administrator
+    state: present
+    create_home: yes
+    shell: /bin/bash
+
+- name: Add administrator user to sudoers
+  user:
+    name: administrator
+    groups: sudo
+    append: yes
+
+- name: Set password for administrator user
+  user:
+    name: administrator
+    password: "{{ administrator_pass | default('changeme') }}"
+
 - name: Install required dependencies
   apt:
     name: "{{ item }}"

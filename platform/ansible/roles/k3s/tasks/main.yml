@@ -10,19 +10,17 @@
     enabled: yes
     state: started
 
-- name: Copy Kubeconfig for the current user
+- name: Copy Kubeconfig for the administrator user
   copy:
     src: /etc/rancher/k3s/k3s.yaml
-    dest: /home/ubuntu/.kube/config
+    dest: /home/administrator/.kube/config
     remote_src: yes
-    owner: ubuntu
-    group: ubuntu
+    owner: administrator
+    group: administrator
     mode: '0644'
-  become_user: ubuntu
 
 - name: Update Kubeconfig to use localhost
   lineinfile:
-    path: /home/ubuntu/.kube/config
+    path: /home/administrator/.kube/config
     regexp: 'https://.*:6443'
     line: 'https://127.0.0.1:6443'
-  become_user: ubuntu
