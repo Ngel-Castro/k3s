@@ -9,6 +9,7 @@
     name: administrator
     state: present
     create_home: yes
+    home: /home/administrator
     shell: /bin/bash
 
 - name: Add administrator user to sudoers
