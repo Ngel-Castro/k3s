@@ -18,7 +18,7 @@ pipeline {
         DATABASE_CREDENTIAL_ID = "database-credentials"
         SUPER_USER_ID = "secure-secret-superusers"
         CONSUL_SERVER = "consul-prod.home"
-        INVENTORY_FILE= "inventory/openpki/inventory_dev.yaml"
+        INVENTORY_FILE= "inventory/k3s/inventory_dev.yaml"
     }
 
     stages {
