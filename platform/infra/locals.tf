@@ -1,17 +1,17 @@
 locals {
   module_outputs  = {
-    for k, v in module.lxc_webcontainer.container_vmids : k => {
+    for k, v in module.vm_qemu.vm_vmids : k => {
       "id"   = v
-      "ip"   = module.lxc_webcontainer.container_ips[k]
+      "ip"   = module.vm_qemu.vm_ips[k]
     }
   }
 
-  containers_inventory = [
-    for i, lxc in var.containers : {
+  vm_inventory = [
+    for i, lxc in var.vms : {
       name = lxc.name
       id   = local.module_outputs[tostring(i)]["id"]
       ip   = replace(local.module_outputs[tostring(i)]["ip"], "/\\/\\d+$/", "")
     }
   ]
-  lxc_inventory_json = jsonencode(local.containers_inventory)
+  vm_inventory_json = jsonencode(local.vm_inventory)
 }
