@@ -1,7 +1,7 @@
 environment       = "dev"
 vms = [
     { 
-        name            = "k3s-dev"
+        name            = "k3s"
         target_node     = "proxmox"
         storage         = "Kingstone-data"
         storage_size    = 32
