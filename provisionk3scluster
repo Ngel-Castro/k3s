@@ -127,9 +127,8 @@ pipeline {
                     sshagent([env.SSH_CREDENTIALS_ID]) {
                         withCredentials([
                             usernamePassword(credentialsId: env.PROXMOX_CREDENITALS_ID, usernameVariable: 'PROXMOX_TOKEN_ID', passwordVariable: 'PROXMOX_TOKEN_SECRET'),
-                            usernamePassword(credentialsId: env.DATABASE_CREDENTIAL_ID, usernameVariable: 'DB_USER', passwordVariable: 'DB_PASSWORD'),
-                            string(credentialsId: env.CONSUL_CREDENTIAL_ID, variable: 'CONSUL_HTTP_TOKEN'),
-                            string(credentialsId: env.SUPER_USER_ID, variable: 'CLUSTER_PASSWORD')]
+                            usernamePassword(credentialsId: env.SUPER_USER_ID, usernameVariable: 'ADMINISTRATIVE_USER', passwordVariable: 'CLUSTER_PASSWORD'),
+                            string(credentialsId: env.CONSUL_CREDENTIAL_ID, variable: 'CONSUL_HTTP_TOKEN')]
                             ) {
                             sh """
                             ansible-playbook -i ${INVENTORY_FILE} main.yml --extra-vars "ansible_sudo_pass=${CLUSTER_PASSWORD}"
