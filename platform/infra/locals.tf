@@ -7,8 +7,8 @@ locals {
   }
 
   vm_inventory = [
-    for i, lxc in var.vms : {
-      name = lxc.name
+    for i, vm in var.vms : {
+      name = vm.name
       id   = local.module_outputs[tostring(i)]["id"]
       ip   = replace(local.module_outputs[tostring(i)]["ip"], "/\\/\\d+$/", "")
     }

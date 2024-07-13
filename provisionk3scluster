@@ -65,7 +65,7 @@ pipeline {
                     script {
                         // Execute a shell command and capture its output
                         withCredentials([string(credentialsId: env.CONSUL_CREDENTIAL_ID, variable: 'CONSUL_HTTP_TOKEN')]) {
-                            def lxc_ip = sh(script: 'tofu output -json lxc-ip', returnStdout: true).trim()
+                            def lxc_ip = sh(script: 'tofu output -json vm-ip', returnStdout: true).trim()
                             def ipArray = extractIpFromJson(lxc_ip)
                             echo "Extracted IPs: ${ipArray.join(', ')}"
                             // Save the IP array to a file and stash it

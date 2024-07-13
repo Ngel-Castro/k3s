@@ -1,4 +1,4 @@
-output "lxc-ip" {
-    value = local.containers_inventory
+output "vm-ip" {
+    value = local.vm_inventory
     description = "LXC(s) inventory"
 }
