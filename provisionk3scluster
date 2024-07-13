@@ -16,7 +16,7 @@ pipeline {
         REMOTE_HOME = "/home/administrator/"
         CONSUL_CREDENTIAL_ID = "consul-sa-token"
         DATABASE_CREDENTIAL_ID = "database-credentials"
-        SUPER_USER_ID = "secure-secret-superusers"
+        SUPER_USER_ID = "admin-credentials"
         CONSUL_SERVER = "consul-prod.home"
         INVENTORY_FILE= "inventory/k3s/inventory_dev.yaml"
     }
@@ -129,10 +129,10 @@ pipeline {
                             usernamePassword(credentialsId: env.PROXMOX_CREDENITALS_ID, usernameVariable: 'PROXMOX_TOKEN_ID', passwordVariable: 'PROXMOX_TOKEN_SECRET'),
                             usernamePassword(credentialsId: env.DATABASE_CREDENTIAL_ID, usernameVariable: 'DB_USER', passwordVariable: 'DB_PASSWORD'),
                             string(credentialsId: env.CONSUL_CREDENTIAL_ID, variable: 'CONSUL_HTTP_TOKEN'),
-                            string(credentialsId: env.SUPER_USER_ID, variable: 'ADMINISTRATOR_PASS')]
+                            string(credentialsId: env.SUPER_USER_ID, variable: 'CLUSTER_PASSWORD')]
                             ) {
                             sh """
-                            ansible-playbook -i ${INVENTORY_FILE} main.yml --extra-vars "administrator_pass=${ADMINISTRATOR_PASS}"
+                            ansible-playbook -i ${INVENTORY_FILE} main.yml --extra-vars "ansible_sudo_pass=${CLUSTER_PASSWORD}"
                             """
                         }
                     }

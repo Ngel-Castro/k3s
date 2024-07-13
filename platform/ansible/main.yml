@@ -1,5 +1,5 @@
 ---
-- name: Provision a database
+- name: Provision a K3s cluster
   hosts: k3s
   become: yes
   roles:
