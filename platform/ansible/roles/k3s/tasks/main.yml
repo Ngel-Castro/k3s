@@ -14,6 +14,8 @@
   file:
     path: /home/administrator/.kube/
     state: directory
+    owner: administrator
+    group: administrator
     mode: '0755'
 
 - name: Copy Kubeconfig for the administrator user
