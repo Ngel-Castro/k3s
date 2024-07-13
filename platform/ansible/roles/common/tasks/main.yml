@@ -4,24 +4,12 @@
     update_cache: yes
   when: ansible_os_family == "Debian"
 
-- name: Create administrator user
-  user:
-    name: administrator
+- name: Allow run sudo commands without password
+  community.general.sudoers:
+    name: admin_role
     state: present
-    create_home: yes
-    home: /home/administrator
-    shell: /bin/bash
-
-- name: Add administrator user to sudoers
-  user:
-    name: administrator
-    groups: sudo
-    append: yes
-
-- name: Set password for administrator user
-  user:
-    name: administrator
-    password: "{{ administrator_pass | default('changeme') }}"
+    user: "{{ admin_user }}"
+    commands: ALL
 
 - name: Install required dependencies
   apt:

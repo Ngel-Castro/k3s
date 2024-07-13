@@ -3,6 +3,6 @@ all:
 %{ for idx, vm in jsondecode(vms_inventory) ~}
         ${vm.name}:
             ansible_host: "${vm.ip}"
-            ansible_user: "root"
+            ansible_user: "administrator"
             platform_environment: '{{ platform_environment }}'
 %{ endfor ~}
