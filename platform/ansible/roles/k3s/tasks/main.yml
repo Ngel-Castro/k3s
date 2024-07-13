@@ -24,9 +24,3 @@
     owner: administrator
     group: administrator
     mode: '0644'
-
-- name: Update Kubeconfig to use localhost
-  lineinfile:
-    path: /home/administrator/.kube/config
-    regexp: 'https://.*:6443'
-    line: 'https://127.0.0.1:6443'
