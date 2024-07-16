@@ -27,9 +27,9 @@
     group: administrator
     mode: '0644'
 
-- name: Replace 127.0.0.1 with {{ controller_ip }} in configuration file
+- name: Replace 127.0.0.1 with {{ ansible_host }} in configuration file
   ansible.builtin.lineinfile:
     path: /home/administrator/.kube/config
     regexp: '127\.0\.0\.1'
-    line: "{{ controller_ip }}"
+    line: "{{ ansible_host }}"
     backup: yes
