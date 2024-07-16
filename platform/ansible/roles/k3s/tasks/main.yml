@@ -33,3 +33,7 @@
     regexp: '127\.0\.0\.1'
     line: "{{ ansible_host }}"
     backup: yes
+
+- name: Download and install qovery
+  shell: |
+    curl -s https://get.qovery.com | bash
