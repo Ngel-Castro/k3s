@@ -31,7 +31,7 @@
   ansible.builtin.lineinfile:
     path: /home/administrator/.kube/config
     regexp: '127\.0\.0\.1'
-    line: "{{ ansible_host }}"
+    line: "    server: https://{{ ansible_host }}:6443"
     backup: yes
 
 - name: Download and install qovery
