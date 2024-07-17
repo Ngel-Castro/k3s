@@ -8,8 +8,8 @@ vms = [
         full_clone      = true
         template_name   = "ubuntu-server-base"
         network_bridge  = "vmbr0"
-        memory          = 2048
-        cores           = 2
+        memory          = 6144
+        cores           = 4
         tags            = "tofu;k3s"
     }
 ]
