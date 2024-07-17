@@ -2,6 +2,12 @@
   ansible.builtin.apt:
     name: 
       - docker.io
+
+- name: Add user to docker group
+  user:
+    name: "{{ admin_user }}"
+    groups: docker
+    append: yes
   
 - name: Download and install K3s
   shell: |
@@ -17,24 +23,24 @@
 
 - name: Create a directory if it doesn't exist
   file:
-    path: /home/administrator/.kube/
+    path: "/home/{{ admin_user }}/.kube/"
     state: directory
-    owner: administrator
-    group: administrator
+    owner: "{{ admin_user }}"
+    group: "{{ admin_user }}"
     mode: '0755'
 
 - name: Copy Kubeconfig for the administrator user
   copy:
     src: /etc/rancher/k3s/k3s.yaml
-    dest: /home/administrator/.kube/config
+    dest: "/home/{{ admin_user }}/.kube/config"
     remote_src: yes
-    owner: administrator
-    group: administrator
+    owner: "{{ admin_user }}"
+    group: "{{ admin_user }}"
     mode: '0644'
 
 - name: Replace 127.0.0.1 with {{ ansible_host }} in configuration file
   ansible.builtin.lineinfile:
-    path: /home/administrator/.kube/config
+    path: "/home/{{ admin_user }}/.kube/config"
     regexp: '127\.0\.0\.1'
     line: "    server: https://{{ ansible_host }}:6443"
     backup: yes
