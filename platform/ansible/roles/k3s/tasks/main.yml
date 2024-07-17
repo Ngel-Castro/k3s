@@ -1,6 +1,10 @@
+- name: Download and install docker
+  shell: |
+    curl https://releases.rancher.com/install-docker/20.10.sh | sh
+  
 - name: Download and install K3s
   shell: |
-    curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server --disable=traefik" sh -s -
+    curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server --disable=traefik" sh -s - --docker
   args:
     creates: /usr/local/bin/k3s
 
