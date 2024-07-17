@@ -1,6 +1,6 @@
 - name: Download and install K3s
   shell: |
-    curl -sfL https://get.k3s.io | sh -s - server --disable servicelb --disable traefik
+    curl -sfL https://get.k3s.io | sh -
   args:
     creates: /usr/local/bin/k3s
 
