@@ -1,6 +1,7 @@
-- name: Download and install docker
-  shell: |
-    curl https://releases.rancher.com/install-docker/20.10.sh | sh
+- name: Install Docker
+  ansible.builtin.apt:
+    name: 
+      - docker.io
   
 - name: Download and install K3s
   shell: |
