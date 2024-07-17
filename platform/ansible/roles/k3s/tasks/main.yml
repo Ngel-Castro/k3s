@@ -37,3 +37,7 @@
 - name: Download and install qovery
   shell: |
     curl -s https://get.qovery.com | bash
+
+- name: Download and install helm
+  shell: |
+    curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
