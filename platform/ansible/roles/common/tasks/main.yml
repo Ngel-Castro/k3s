@@ -20,8 +20,8 @@
   file:
     path: /mnt/truenas
     state: directory
-    owner: "{{ admin_user }}"
-    group: "{{ admin_user }}"
+    owner: "root"
+    group: "root"
     mode: '0755'
 - name: Install NFS client (nfs-common)
   apt:
