@@ -1,16 +1,13 @@
----
 - name: Update apt cache
   apt:
     update_cache: yes
   when: ansible_os_family == "Debian"
-
 - name: Allow run sudo commands without password
   community.general.sudoers:
     name: admin_role
     state: present
     user: "{{ admin_user }}"
     commands: ALL
-
 - name: Install required dependencies
   apt:
     name: "{{ item }}"
@@ -19,3 +16,22 @@
     - curl
     - apt-transport-https
     - ca-certificates
+- name: Create mount directory for TrueNAS
+  file:
+    path: /mnt/truenas
+    state: directory
+    owner: "{{ admin_user }}"
+    group: "{{ admin_user }}"
+    mode: '0755'
+- name: Install NFS client (nfs-common)
+  apt:
+    name: nfs-common
+    state: present
+  when: ansible_os_family == "Debian"
+- name: Ensure TrueNAS NFS export is in fstab and mounted
+  mount:
+    path: /mnt/truenas
+    src: "truenas.home:/mnt/fast-pool/nfs-tmp"
+    fstype: nfs
+    opts: defaults,_netdev
+    state: mounted
