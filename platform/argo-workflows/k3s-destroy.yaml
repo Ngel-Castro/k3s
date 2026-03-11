@@ -1,0 +1,250 @@
+---
+# k3s Cluster Destroy Workflow
+#
+# Destroys a k3s cluster by running `tofu destroy` against the same Consul state
+# path used during provisioning.  No Ansible cleanup is performed — destroying
+# the Proxmox VMs is sufficient.
+#
+# Required Kubernetes Secrets (argo-workflows namespace):
+#   proxmox-token      — keys: proxmox-token-id, proxmox-token-secret
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: k3s-destroy
+  namespace: argo-workflows
+  annotations:
+    workflows.argoproj.io/description: |
+      Destroys a k3s cluster provisioned by k3s-provisioning.
+      Clones the k3s repository and runs OpenTofu destroy against the Consul state.
+    workflows.argoproj.io/version: "1.0.0"
+    workflows.argoproj.io/tags: k3s,kubernetes,opentofu,destroy,proxmox
+    workflows.argoproj.io/maintainer: "platform-team"
+spec:
+  arguments:
+    parameters:
+    - name: git-repo
+      value: "https://github.com/Ngel-Castro/k3s.git"
+      description: "k3s repository URL"
+
+    - name: git-branch
+      value: "main"
+      description: "Git branch or tag to checkout"
+
+    - name: proxmox-host
+      description: "Proxmox API URL"
+
+    - name: vms-config
+      description: "Same VM config used during provisioning (needed to reconstruct tfvars)"
+
+    - name: environment
+      description: "Environment name — must match the provisioning environment"
+      valueFrom:
+        supplied: {}
+
+    - name: state-backend
+      value: "consul"
+      description: "OpenTofu state backend type"
+
+    - name: consul-address
+      value: "consul-server.artifacts.svc.cluster.local:8500"
+      description: "Consul address — must match provisioning"
+
+    - name: consul-path
+      value: "opentofu/state"
+      description: "Consul KV path — must match provisioning"
+
+    - name: consul-scheme
+      value: "http"
+      description: "Consul scheme"
+
+    - name: opentofu-version
+      value: "1.6.0"
+      description: "OpenTofu version"
+
+    - name: nats-stream-id
+      value: ""
+      description: "Mushu API service request ID — must match the original provisioning nats-stream-id to target the correct Consul state path"
+
+    - name: nats-url
+      value: "nats://nats.messaging.svc.cluster.local:4222"
+      description: "NATS server URL for pipeline event notifications"
+
+  volumeClaimTemplates:
+  - metadata:
+      name: workspace
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 1Gi
+
+  serviceAccountName: workflow
+  entrypoint: destroy-k3s
+  onExit: exit-handler
+
+  templates:
+  - name: destroy-k3s
+    steps:
+    # Step 1: Clone k3s repository
+    - - name: git-clone
+        template: git-clone-step
+
+    # Step 2: Initialize OpenTofu — must point to same Consul path as provisioning
+    - - name: tofu-init
+        template: tofu-init-step
+
+    # Step 3: Create terraform.tfvars (required for destroy plan)
+    - - name: create-tfvars
+        template: create-tfvars-step
+
+    # Step 4: Plan destroy
+    - - name: tofu-plan-destroy
+        template: tofu-plan-destroy-step
+
+    # Step 5: Manual approval before destroying the cluster
+    - - name: manual-approval
+        template: manual-approval-step
+
+    # Step 6: Destroy VMs
+    - - name: tofu-destroy
+        template: tofu-destroy-step
+
+  # Template: Clone k3s repository
+  - name: git-clone-step
+    container:
+      image: alpine/git:latest
+      command: [ sh, -c ]
+      args:
+      - |
+        echo "Cloning k3s repository: {{workflow.parameters.git-repo}}"
+        git clone --branch {{workflow.parameters.git-branch}} {{workflow.parameters.git-repo}} /workspace/k3s
+        echo "Repository cloned"
+      volumeMounts:
+      - name: workspace
+        mountPath: /workspace
+
+  # Template: Initialize OpenTofu with same Consul state path as provisioning
+  - name: tofu-init-step
+    container:
+      image: ghcr.io/opentofu/opentofu:{{workflow.parameters.opentofu-version}}
+      command: [ sh, -c ]
+      args:
+      - |
+        cd /workspace/k3s/platform/infra
+        if [ "{{workflow.parameters.state-backend}}" = "consul" ]; then
+          if [ -z "{{workflow.parameters.nats-stream-id}}" ]; then
+            echo "ERROR: nats-stream-id required to locate Consul state from provisioning"
+            exit 1
+          fi
+          cat > backend.tf <<EOF
+        terraform {
+          backend "consul" {
+            address = "{{workflow.parameters.consul-address}}"
+            scheme  = "{{workflow.parameters.consul-scheme}}"
+            path    = "{{workflow.parameters.consul-path}}/{{workflow.parameters.environment}}/{{workflow.parameters.nats-stream-id}}"
+          }
+        }
+        EOF
+        fi
+        tofu init -no-color -reconfigure
+        echo "OpenTofu initialized (pointing to original state)"
+      volumeMounts:
+      - name: workspace
+        mountPath: /workspace
+
+  # Template: Recreate terraform.tfvars so destroy plan resolves variables
+  - name: create-tfvars-step
+    container:
+      image: alpine:latest
+      command: [ sh, -c ]
+      env:
+      - name: PROXMOX_TOKEN_ID
+        valueFrom:
+          secretKeyRef:
+            name: proxmox-token
+            key: proxmox-token-id
+      - name: PROXMOX_TOKEN_SECRET
+        valueFrom:
+          secretKeyRef:
+            name: proxmox-token
+            key: proxmox-token-secret
+      args:
+      - |
+        cd /workspace/k3s/platform/infra
+        cat > terraform.tfvars <<EOF
+        proxmox_host         = "{{workflow.parameters.proxmox-host}}"
+        proxmox_token_id     = "$PROXMOX_TOKEN_ID"
+        proxmox_token_secret = "$PROXMOX_TOKEN_SECRET"
+        environment          = "{{workflow.parameters.environment}}"
+        vms                  = {{workflow.parameters.vms-config}}
+        EOF
+        echo "terraform.tfvars created for destroy"
+      volumeMounts:
+      - name: workspace
+        mountPath: /workspace
+
+  # Template: Plan destroy (shows what will be deleted)
+  - name: tofu-plan-destroy-step
+    container:
+      image: ghcr.io/opentofu/opentofu:{{workflow.parameters.opentofu-version}}
+      command: [ sh, -c ]
+      args:
+      - |
+        cd /workspace/k3s/platform/infra
+        echo "Planning cluster destruction..."
+        tofu plan -destroy -no-color -out=destroy-plan
+        echo "Destroy plan created. Review before approving."
+      volumeMounts:
+      - name: workspace
+        mountPath: /workspace
+
+  # Template: Manual approval gate — always required for destroy
+  - name: manual-approval-step
+    suspend: {}
+
+  # Template: Destroy the k3s cluster VMs
+  - name: tofu-destroy-step
+    container:
+      image: ghcr.io/opentofu/opentofu:{{workflow.parameters.opentofu-version}}
+      command: [ sh, -c ]
+      args:
+      - |
+        cd /workspace/k3s/platform/infra
+        echo "Destroying k3s cluster..."
+        tofu apply -no-color destroy-plan
+        echo "k3s cluster destroyed successfully"
+      volumeMounts:
+      - name: workspace
+        mountPath: /workspace
+
+  # Template: Publish pipeline lifecycle event to NATS
+  - name: nats-notify-step
+    inputs:
+      parameters:
+      - name: event
+      - name: message
+    container:
+      image: natsio/nats-box:latest
+      command: [ sh, -c ]
+      args:
+      - |
+        STREAM_ID="{{workflow.parameters.nats-stream-id}}"
+        if [ -z "$STREAM_ID" ]; then
+          exit 0
+        fi
+        SUBJECT="pipeline.${STREAM_ID}.{{inputs.parameters.event}}"
+        PAYLOAD="{\"event\":\"{{inputs.parameters.event}}\",\"workflowName\":\"{{workflow.name}}\",\"message\":\"{{inputs.parameters.message}}\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
+        nats pub --server "{{workflow.parameters.nats-url}}" "$SUBJECT" "$PAYLOAD"
+
+  # Template: Exit handler
+  - name: exit-handler
+    steps:
+    - - name: notify-final-status
+        template: nats-notify-step
+        arguments:
+          parameters:
+          - name: event
+            value: "{{= workflow.status == 'Succeeded' ? 'deleted' : 'failed'}}"
+          - name: message
+            value: "Workflow {{workflow.name}} finished with status: {{workflow.status}}"
+        when: "'{{workflow.parameters.nats-stream-id}}' != ''"
