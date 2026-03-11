@@ -1,0 +1,441 @@
+---
+# k3s Cluster Provisioning Workflow
+#
+# Provisions a k3s Kubernetes cluster on Proxmox VMs using:
+#   1. OpenTofu (vm_qemu_multiple) to create VMs
+#   2. Ansible to install k3s on the provisioned VMs
+#
+# Required Kubernetes Secrets (argo-workflows namespace):
+#   proxmox-token      — keys: proxmox-token-id, proxmox-token-secret
+#   k3s-admin          — keys: admin-password (ansible sudo pass)
+#   k3s-ssh-key        — key: ssh-private-key (OpenSSH private key)
+#
+# Required Kubernetes ConfigMaps (argo-workflows namespace):
+#   proxmox-config     — key: PROXMOX_API_URL
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: k3s-provisioning
+  namespace: argo-workflows
+  annotations:
+    workflows.argoproj.io/description: |
+      Provisions a k3s Kubernetes cluster on Proxmox VMs.
+      Clones the k3s repository, runs OpenTofu to create VMs, waits for SSH,
+      then runs Ansible to install k3s.
+    workflows.argoproj.io/version: "1.0.0"
+    workflows.argoproj.io/tags: k3s,kubernetes,ansible,opentofu,proxmox
+    workflows.argoproj.io/maintainer: "platform-team"
+spec:
+  arguments:
+    parameters:
+    - name: git-repo
+      value: "https://github.com/Ngel-Castro/k3s.git"
+      description: "k3s repository URL"
+
+    - name: git-branch
+      value: "main"
+      description: "Git branch or tag to checkout"
+
+    - name: proxmox-host
+      description: "Proxmox API URL — resolve from ConfigMap proxmox-config key PROXMOX_API_URL"
+
+    - name: vms-config
+      value: |
+        [
+          {
+            "name": "k3s-node-01",
+            "target_node": "proxmox",
+            "storage": "Kingstone_Backups",
+            "storage_size": 32,
+            "full_clone": true,
+            "template_name": "ubuntu-server-base",
+            "network_bridge": "vmbr0",
+            "memory": 6144,
+            "cores": 4,
+            "tags": "opentofu,argo,k3s",
+            "vmid": null
+          }
+        ]
+      description: "k3s node VM specifications (JSON array, same shape as vms-config in vm_qemu_multiple)"
+
+    - name: admin-user
+      value: "administrator"
+      description: "Admin username on provisioned VMs (Ansible remote user)"
+
+    - name: environment
+      description: "Environment name (dev, staging, prod) — must be supplied by the caller"
+      valueFrom:
+        supplied: {}
+
+    - name: state-backend
+      value: "consul"
+      description: "OpenTofu state backend type"
+
+    - name: consul-address
+      value: "consul-server.artifacts.svc.cluster.local:8500"
+      description: "Consul address for state backend"
+
+    - name: consul-path
+      value: "opentofu/state"
+      description: "Consul KV path for state"
+
+    - name: consul-scheme
+      value: "http"
+      description: "Consul scheme"
+
+    - name: auto-approve
+      value: "false"
+      description: "Auto-approve the OpenTofu apply"
+
+    - name: opentofu-version
+      value: "1.6.0"
+      description: "OpenTofu version"
+
+    - name: ssh-probe-timeout
+      value: "300"
+      description: "Seconds to wait for SSH to become available on provisioned VMs"
+
+    - name: nats-stream-id
+      value: ""
+      description: "Mushu API service request ID — used as NATS subject key and Consul KV path segment"
+
+    - name: nats-url
+      value: "nats://nats.messaging.svc.cluster.local:4222"
+      description: "NATS server URL for pipeline event notifications"
+
+  volumeClaimTemplates:
+  - metadata:
+      name: workspace
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 2Gi
+
+  serviceAccountName: workflow
+  entrypoint: provision-k3s
+  onExit: exit-handler
+
+  templates:
+  - name: provision-k3s
+    steps:
+    # Step 1: Clone k3s repository (contains both OpenTofu and Ansible code)
+    - - name: git-clone
+        template: git-clone-step
+
+    # Step 2: Initialize OpenTofu with Consul backend
+    - - name: tofu-init
+        template: tofu-init-step
+
+    # Step 3: Create terraform.tfvars with VM config and credentials
+    - - name: create-tfvars
+        template: create-tfvars-step
+
+    # Step 4: Plan VM provisioning
+    - - name: tofu-plan
+        template: tofu-plan-step
+
+    # Step 5: Notify plan ready
+    - - name: notify-plan-completed
+        template: nats-notify-step
+        arguments:
+          parameters:
+          - name: event
+            value: "plan_completed"
+          - name: message
+            value: "OpenTofu plan completed. Awaiting approval."
+        when: "'{{workflow.parameters.nats-stream-id}}' != ''"
+
+    # Step 6: Apply (auto or manual gate)
+    - - name: tofu-apply
+        template: tofu-apply-step
+        when: "{{workflow.parameters.auto-approve}} == true"
+      - name: manual-approval
+        template: manual-approval-step
+        when: "{{workflow.parameters.auto-approve}} == false"
+
+    # Step 7: Notify approval (manual-approve path)
+    - - name: notify-approved
+        template: nats-notify-step
+        arguments:
+          parameters:
+          - name: event
+            value: "approved"
+          - name: message
+            value: "Manual approval granted. Applying VM changes."
+        when: "{{workflow.parameters.auto-approve}} == false && '{{workflow.parameters.nats-stream-id}}' != ''"
+
+    # Step 8: Apply after manual approval
+    - - name: tofu-apply-after-approval
+        template: tofu-apply-step
+        when: "{{workflow.parameters.auto-approve}} == false"
+
+    # Step 9: Wait for SSH to be available on all VMs
+    - - name: probe-ssh
+        template: probe-ssh-step
+
+    # Step 10: Run Ansible to install k3s
+    - - name: run-ansible
+        template: ansible-step
+
+    # Step 11: Notify provisioning complete
+    - - name: notify-apply-completed
+        template: nats-notify-step
+        arguments:
+          parameters:
+          - name: event
+            value: "apply_completed"
+          - name: message
+            value: "k3s cluster provisioning completed successfully."
+        when: "'{{workflow.parameters.nats-stream-id}}' != ''"
+
+  # Template: Clone k3s Git repository
+  - name: git-clone-step
+    container:
+      image: alpine/git:latest
+      command: [ sh, -c ]
+      args:
+      - |
+        echo "Cloning k3s repository: {{workflow.parameters.git-repo}}"
+        git clone --branch {{workflow.parameters.git-branch}} {{workflow.parameters.git-repo}} /workspace/k3s
+        echo "Repository cloned successfully"
+        ls -la /workspace/k3s
+      volumeMounts:
+      - name: workspace
+        mountPath: /workspace
+
+  # Template: Initialize OpenTofu with Consul backend
+  - name: tofu-init-step
+    container:
+      image: ghcr.io/opentofu/opentofu:{{workflow.parameters.opentofu-version}}
+      command: [ sh, -c ]
+      args:
+      - |
+        cd /workspace/k3s/platform/infra
+        echo "Initializing OpenTofu..."
+
+        if [ "{{workflow.parameters.state-backend}}" = "consul" ]; then
+          if [ -z "{{workflow.parameters.nats-stream-id}}" ]; then
+            echo "ERROR: nats-stream-id is required when state-backend=consul (state isolation)."
+            exit 1
+          fi
+          cat > backend.tf <<EOF
+        terraform {
+          backend "consul" {
+            address = "{{workflow.parameters.consul-address}}"
+            scheme  = "{{workflow.parameters.consul-scheme}}"
+            path    = "{{workflow.parameters.consul-path}}/{{workflow.parameters.environment}}/{{workflow.parameters.nats-stream-id}}"
+          }
+        }
+        EOF
+          echo "Consul backend.tf created"
+        fi
+
+        tofu init -no-color -reconfigure
+        echo "OpenTofu initialized"
+      volumeMounts:
+      - name: workspace
+        mountPath: /workspace
+
+  # Template: Create terraform.tfvars
+  - name: create-tfvars-step
+    container:
+      image: alpine:latest
+      command: [ sh, -c ]
+      env:
+      - name: PROXMOX_TOKEN_ID
+        valueFrom:
+          secretKeyRef:
+            name: proxmox-token
+            key: proxmox-token-id
+      - name: PROXMOX_TOKEN_SECRET
+        valueFrom:
+          secretKeyRef:
+            name: proxmox-token
+            key: proxmox-token-secret
+      args:
+      - |
+        cd /workspace/k3s/platform/infra
+        cat > terraform.tfvars <<EOF
+        proxmox_host         = "{{workflow.parameters.proxmox-host}}"
+        proxmox_token_id     = "$PROXMOX_TOKEN_ID"
+        proxmox_token_secret = "$PROXMOX_TOKEN_SECRET"
+        environment          = "{{workflow.parameters.environment}}"
+        vms                  = {{workflow.parameters.vms-config}}
+        EOF
+        echo "terraform.tfvars created"
+        sed 's/\(proxmox_token_id[[:space:]]*=\).*/\1 "<redacted>"/; s/\(proxmox_token_secret[[:space:]]*=\).*/\1 "<redacted>"/' terraform.tfvars
+      volumeMounts:
+      - name: workspace
+        mountPath: /workspace
+
+  # Template: Plan VM provisioning
+  - name: tofu-plan-step
+    container:
+      image: ghcr.io/opentofu/opentofu:{{workflow.parameters.opentofu-version}}
+      command: [ sh, -c ]
+      args:
+      - |
+        cd /workspace/k3s/platform/infra
+        tofu plan -no-color -out=tfplan
+        echo "Plan completed"
+      volumeMounts:
+      - name: workspace
+        mountPath: /workspace
+
+  # Template: Manual approval gate
+  - name: manual-approval-step
+    suspend: {}
+
+  # Template: Apply VM provisioning (generates inventory file as side effect)
+  - name: tofu-apply-step
+    container:
+      image: ghcr.io/opentofu/opentofu:{{workflow.parameters.opentofu-version}}
+      command: [ sh, -c ]
+      args:
+      - |
+        cd /workspace/k3s/platform/infra
+        if [ -f "tfplan" ]; then
+          tofu apply -no-color tfplan
+        else
+          tofu apply -no-color -auto-approve
+        fi
+        echo "=== Outputs ==="
+        tofu output -no-color
+        tofu output -json > /workspace/outputs.json
+        echo "VMs created. Ansible inventory at: inventory_{{workflow.parameters.environment}}.yaml"
+        ls -la inventory_*.yaml 2>/dev/null || echo "No inventory files found"
+      volumeMounts:
+      - name: workspace
+        mountPath: /workspace
+
+  # Template: Probe SSH availability on all provisioned VMs
+  - name: probe-ssh-step
+    container:
+      image: alpine:latest
+      command: [ sh, -c ]
+      args:
+      - |
+        apk add --no-cache netcat-openbsd 2>/dev/null
+        INVENTORY_FILE="/workspace/k3s/platform/infra/inventory_{{workflow.parameters.environment}}.yaml"
+        TIMEOUT={{workflow.parameters.ssh-probe-timeout}}
+
+        if [ ! -f "$INVENTORY_FILE" ]; then
+          echo "Inventory file not found: $INVENTORY_FILE — skipping SSH probe"
+          exit 0
+        fi
+
+        # Extract IPs from YAML inventory (ansible_host values)
+        IPS=$(grep 'ansible_host' "$INVENTORY_FILE" | awk '{print $2}')
+
+        for IP in $IPS; do
+          echo "Probing SSH on $IP:22 (timeout: ${TIMEOUT}s)"
+          elapsed=0
+          while [ $elapsed -lt $TIMEOUT ]; do
+            if nc -z -w5 "$IP" 22 2>/dev/null; then
+              echo "SSH available on $IP"
+              break
+            fi
+            sleep 10
+            elapsed=$((elapsed + 10))
+          done
+          if [ $elapsed -ge $TIMEOUT ]; then
+            echo "ERROR: SSH not available on $IP after ${TIMEOUT}s"
+            exit 1
+          fi
+        done
+        echo "All VMs are reachable via SSH"
+      volumeMounts:
+      - name: workspace
+        mountPath: /workspace
+
+  # Template: Run Ansible to install k3s
+  # SSH private key and admin password are injected from Kubernetes Secrets.
+  - name: ansible-step
+    container:
+      image: cytopia/ansible:latest
+      command: [ sh, -c ]
+      env:
+      - name: ANSIBLE_HOST_KEY_CHECKING
+        value: "False"
+      - name: CLUSTER_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: k3s-admin
+            key: admin-password
+      args:
+      - |
+        # Install openssh for ssh-agent support
+        apk add --no-cache openssh-client 2>/dev/null
+
+        # Write SSH private key from Secret
+        mkdir -p /root/.ssh
+        cat /etc/ssh-key/ssh-private-key > /root/.ssh/id_rsa
+        chmod 600 /root/.ssh/id_rsa
+
+        # Move OpenTofu-generated inventory to Ansible inventory directory
+        GENERATED_INVENTORY="/workspace/k3s/platform/infra/inventory_{{workflow.parameters.environment}}.yaml"
+        ANSIBLE_INVENTORY="/workspace/k3s/platform/ansible/inventory/k3s/inventory_{{workflow.parameters.environment}}.yaml"
+
+        if [ -f "$GENERATED_INVENTORY" ]; then
+          mkdir -p "$(dirname "$ANSIBLE_INVENTORY")"
+          cp "$GENERATED_INVENTORY" "$ANSIBLE_INVENTORY"
+          echo "Inventory copied to: $ANSIBLE_INVENTORY"
+        else
+          echo "ERROR: Generated inventory not found at $GENERATED_INVENTORY"
+          exit 1
+        fi
+
+        cd /workspace/k3s/platform/ansible
+        echo "Running Ansible playbook..."
+        ansible-playbook \
+          -i "inventory/k3s/inventory_{{workflow.parameters.environment}}.yaml" \
+          --private-key /root/.ssh/id_rsa \
+          --extra-vars "ansible_sudo_pass=${CLUSTER_PASSWORD} admin_user={{workflow.parameters.admin-user}}" \
+          --ssh-extra-args="-o StrictHostKeyChecking=no" \
+          main.yml
+        echo "k3s cluster provisioning complete"
+      volumeMounts:
+      - name: workspace
+        mountPath: /workspace
+      - name: ssh-key
+        mountPath: /etc/ssh-key
+        readOnly: true
+    volumes:
+    - name: ssh-key
+      secret:
+        secretName: k3s-ssh-key
+
+  # Template: Publish pipeline lifecycle event to NATS
+  - name: nats-notify-step
+    inputs:
+      parameters:
+      - name: event
+      - name: message
+    container:
+      image: natsio/nats-box:latest
+      command: [ sh, -c ]
+      args:
+      - |
+        STREAM_ID="{{workflow.parameters.nats-stream-id}}"
+        if [ -z "$STREAM_ID" ]; then
+          echo "No NATS stream ID — skipping notification"
+          exit 0
+        fi
+        SUBJECT="pipeline.${STREAM_ID}.{{inputs.parameters.event}}"
+        PAYLOAD="{\"event\":\"{{inputs.parameters.event}}\",\"workflowName\":\"{{workflow.name}}\",\"message\":\"{{inputs.parameters.message}}\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
+        echo "Publishing to $SUBJECT"
+        nats pub --server "{{workflow.parameters.nats-url}}" "$SUBJECT" "$PAYLOAD"
+
+  # Template: Exit handler — publishes final status to NATS
+  - name: exit-handler
+    steps:
+    - - name: notify-final-status
+        template: nats-notify-step
+        arguments:
+          parameters:
+          - name: event
+            value: "{{= workflow.status == 'Succeeded' ? 'completed' : 'failed'}}"
+          - name: message
+            value: "Workflow {{workflow.name}} finished with status: {{workflow.status}}"
+        when: "'{{workflow.parameters.nats-stream-id}}' != ''"
