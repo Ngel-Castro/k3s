@@ -1,5 +1,5 @@
 module "vm_qemu" {
-  source = "github.com/Ngel-Castro/vm_qemu_multiple?ref=stable"
+  source = "github.com/Ngel-Castro/vm_qemu_multiple?ref=0.0.2"
 
   # Pass in required variables
     proxmox_host            = var.proxmox_host

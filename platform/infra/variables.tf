@@ -13,6 +13,7 @@ variable "vms" {
         ip              = optional(string, "dhcp")
         vmid            = optional(number, null)
         gw              = optional(string, null)
+        vlan_tag        = optional(number, 3)
     }))
     default = [
         {
