@@ -38,11 +38,11 @@
     group: "{{ admin_user }}"
     mode: '0644'
 
-- name: Replace 127.0.0.1 with {{ ansible_host }} in configuration file
+- name: Replace 127.0.0.1 with {{ inventory_hostname }} in configuration file
   ansible.builtin.lineinfile:
     path: "/home/{{ admin_user }}/.kube/config"
     regexp: '127\.0\.0\.1'
-    line: "    server: https://{{ ansible_host }}:6443"
+    line: "    server: https://{{ inventory_hostname }}:6443"
     backup: yes
 
 - name: Download and install qovery
