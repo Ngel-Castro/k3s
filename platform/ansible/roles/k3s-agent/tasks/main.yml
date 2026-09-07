@@ -1,0 +1,22 @@
+- name: Install Docker
+  ansible.builtin.apt:
+    name:
+      - docker.io
+
+- name: Add user to docker group
+  user:
+    name: "{{ admin_user }}"
+    groups: docker
+    append: yes
+
+- name: Download and install K3s agent
+  shell: |
+    curl -sfL https://get.k3s.io | K3S_URL="{{ k3s_server_url }}" K3S_TOKEN="{{ k3s_node_token }}" INSTALL_K3S_EXEC="agent" sh -s - --docker
+  args:
+    creates: /usr/local/bin/k3s
+
+- name: Enable and start K3s agent service
+  systemd:
+    name: k3s-agent
+    enabled: yes
+    state: started
