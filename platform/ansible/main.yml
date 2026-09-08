@@ -5,3 +5,10 @@
   roles:
     - common
     - k3s
+
+- name: Provision a K3s agent node
+  hosts: k3s_agent
+  become: yes
+  roles:
+    - common
+    - k3s-agent
