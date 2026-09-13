@@ -1,0 +1,40 @@
+---
+- name: Prepare
+  hosts: all
+  become: true
+  tasks:
+    - name: Install curl and systemd utilities
+      ansible.builtin.apt:
+        name:
+          - curl
+          - systemd
+        state: present
+        update_cache: true
+
+    - name: Create stub k3s binary so the install step is skipped
+      ansible.builtin.copy:
+        dest: /usr/local/bin/k3s
+        content: "#!/bin/sh\necho 'k3s stub'\n"
+        mode: "0755"
+
+    - name: Create stub k3s-agent.service unit
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/k3s-agent.service
+        content: |
+          [Unit]
+          Description=Lightweight Kubernetes (agent)
+          After=network-online.target
+
+          [Service]
+          Type=simple
+          ExecStart=/usr/local/bin/k3s agent
+
+          [Install]
+          WantedBy=multi-user.target
+        mode: "0644"
+
+    - name: Reload systemd and enable k3s-agent stub
+      ansible.builtin.systemd:
+        name: k3s-agent
+        daemon_reload: true
+        enabled: true

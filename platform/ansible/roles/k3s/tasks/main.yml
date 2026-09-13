@@ -1,28 +1,18 @@
-- name: Install Docker
-  ansible.builtin.apt:
-    name: 
-      - docker.io
-
-- name: Add user to docker group
-  user:
-    name: "{{ admin_user }}"
-    groups: docker
-    append: yes
-  
+---
 - name: Download and install K3s
-  shell: |
-    curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server --disable=traefik" sh -s - --docker
+  ansible.builtin.shell: |
+    curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server --disable=traefik" sh -s -
   args:
     creates: /usr/local/bin/k3s
 
 - name: Enable and start K3s service
-  systemd:
+  ansible.builtin.systemd:
     name: k3s
-    enabled: yes
+    enabled: true
     state: started
 
 - name: Create a directory if it doesn't exist
-  file:
+  ansible.builtin.file:
     path: "/home/{{ admin_user }}/.kube/"
     state: directory
     owner: "{{ admin_user }}"
@@ -30,25 +20,29 @@
     mode: '0755'
 
 - name: Copy Kubeconfig for the administrator user
-  copy:
+  ansible.builtin.copy:
     src: /etc/rancher/k3s/k3s.yaml
     dest: "/home/{{ admin_user }}/.kube/config"
-    remote_src: yes
+    remote_src: true
     owner: "{{ admin_user }}"
     group: "{{ admin_user }}"
     mode: '0644'
 
-- name: Replace 127.0.0.1 with {{ inventory_hostname }} in configuration file
+- name: Replace server IP with inventory hostname in kubeconfig
   ansible.builtin.lineinfile:
     path: "/home/{{ admin_user }}/.kube/config"
     regexp: '127\.0\.0\.1'
     line: "    server: https://{{ inventory_hostname }}:6443"
-    backup: yes
+    backup: true
 
 - name: Download and install qovery
-  shell: |
+  ansible.builtin.shell: |
     curl -s https://get.qovery.com | bash
+  args:
+    creates: /usr/local/bin/qovery
 
 - name: Download and install helm
-  shell: |
+  ansible.builtin.shell: |
     curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+  args:
+    creates: /usr/local/bin/helm
