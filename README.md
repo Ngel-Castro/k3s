@@ -61,4 +61,7 @@ ansible-lint platform/ansible/
 
 ## CI
 
-GitHub Actions runs `yamllint`, `ansible-lint`, and `molecule test` for both roles on every push/PR that touches `platform/ansible/`. See [`.github/workflows/ansible-ci.yml`](.github/workflows/ansible-ci.yml).
+This platform doesn't use GitHub Actions — CI runs as Argo Workflows, triggered
+via the shared smee.io/Argo Events relay. Wiring this repo's lint + Molecule
+checks into that pipeline is tracked under my-ppm #217. Until that lands, run
+lint and `molecule test` locally (see above) before opening a PR.
