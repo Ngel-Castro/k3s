@@ -11,7 +11,7 @@
 
 - name: Download and install K3s agent
   shell: |
-    curl -sfL https://get.k3s.io | K3S_URL="{{ k3s_server_url }}" K3S_TOKEN="{{ k3s_node_token }}" INSTALL_K3S_EXEC="agent" sh -s - --docker
+    curl -sfL https://get.k3s.io | K3S_URL="{{ k3s_server_url }}" K3S_TOKEN="{{ k3s_node_token }}" INSTALL_K3S_EXEC="agent" sh -s -
   args:
     creates: /usr/local/bin/k3s
 
