@@ -23,12 +23,10 @@
         that: k3s_agent_unit.stat.exists
         fail_msg: "k3s-agent.service unit not found — check that k3s was installed without --docker"
 
-    - name: Get k3s-agent service status
-      ansible.builtin.systemd:
-        name: k3s-agent
-      register: k3s_agent_service
+    - name: Gather service facts
+      ansible.builtin.service_facts:
 
     - name: Assert k3s-agent service is enabled
       ansible.builtin.assert:
-        that: k3s_agent_service.status.UnitFileState == "enabled"
+        that: ansible_facts.services['k3s-agent.service'].status == "enabled"
         fail_msg: "k3s-agent.service is not enabled"

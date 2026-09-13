@@ -23,12 +23,10 @@
         that: k3s_unit.stat.exists
         fail_msg: "k3s.service unit not found"
 
-    - name: Get k3s service status
-      ansible.builtin.systemd:
-        name: k3s
-      register: k3s_service
+    - name: Gather service facts
+      ansible.builtin.service_facts:
 
     - name: Assert k3s service is enabled
       ansible.builtin.assert:
-        that: k3s_service.status.UnitFileState == "enabled"
+        that: ansible_facts.services['k3s.service'].status == "enabled"
         fail_msg: "k3s.service is not enabled"
