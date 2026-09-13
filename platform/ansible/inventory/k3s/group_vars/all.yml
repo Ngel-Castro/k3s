@@ -1,2 +1,3 @@
+---
 admin_user: "administrator"
 controller_ip: "{{ ansible_host }}"

@@ -1,0 +1,12 @@
+---
+- name: Prepare
+  hosts: all
+  become: true
+  tasks:
+    - name: Install curl and systemd utilities
+      ansible.builtin.apt:
+        name:
+          - curl
+          - systemd
+        state: present
+        update_cache: true

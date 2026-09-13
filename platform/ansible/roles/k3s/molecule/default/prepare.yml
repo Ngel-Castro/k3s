@@ -1,0 +1,20 @@
+---
+- name: Prepare
+  hosts: all
+  become: true
+  tasks:
+    - name: Install curl and systemd utilities
+      ansible.builtin.apt:
+        name:
+          - curl
+          - systemd
+        state: present
+        update_cache: true
+
+    - name: Create home directory for root user (used by k3s role)
+      ansible.builtin.file:
+        path: /home/root
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"

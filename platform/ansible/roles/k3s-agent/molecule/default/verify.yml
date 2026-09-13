@@ -1,0 +1,32 @@
+---
+- name: Verify
+  hosts: all
+  become: true
+  tasks:
+    - name: Check that k3s binary is installed
+      ansible.builtin.stat:
+        path: /usr/local/bin/k3s
+      register: k3s_bin
+
+    - name: Assert k3s binary exists
+      ansible.builtin.assert:
+        that: k3s_bin.stat.exists
+        fail_msg: "k3s binary not found at /usr/local/bin/k3s"
+
+    - name: Check k3s-agent systemd unit file exists
+      ansible.builtin.stat:
+        path: /etc/systemd/system/k3s-agent.service
+      register: k3s_agent_unit
+
+    - name: Assert k3s-agent.service unit exists
+      ansible.builtin.assert:
+        that: k3s_agent_unit.stat.exists
+        fail_msg: "k3s-agent.service unit not found — check that k3s was installed without --docker"
+
+    - name: Gather service facts
+      ansible.builtin.service_facts:
+
+    - name: Assert k3s-agent service is enabled
+      ansible.builtin.assert:
+        that: ansible_facts.services['k3s-agent.service'].status == "enabled"
+        fail_msg: "k3s-agent.service is not enabled"
