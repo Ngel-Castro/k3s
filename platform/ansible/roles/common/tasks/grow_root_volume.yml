@@ -1,15 +1,18 @@
 ---
 # Grow the root volume to fill the whole disk.
 #
-# The VM is cloned from the ubuntu-server-base template and its virtual disk is
-# resized to the requested size (e.g. 32 GB), but nothing grows the partition or
-# the LVM volume inside the guest, so the OS keeps seeing the template's
-# original size. Seen on 2026-10-04: a 32 GB agent reported ~14.7 GiB of
-# ephemeral storage and went DiskPressure=True under parallel builds.
+# The Ubuntu installer's default LVM layout creates the root logical volume at
+# only about half of the volume group and leaves the rest unallocated. Seen on
+# 2026-10-04: a 32 GB agent had sda3 = 30 GB and ubuntu-vg = 30 GB, but
+# ubuntu-lv = 15 GB (15 GB free in the VG), so the node reported ~14.7 GiB of
+# ephemeral storage and went DiskPressure=True under parallel builds. The
+# control plane's volume had been extended by hand; nothing automated it.
 #
-# Idempotent: every step is a no-op once the disk is fully used, so this is
-# safe on a node that is already grown (e.g. the control plane). Only the
-# standard Ubuntu layout (root on a single-PV LVM volume group, PV on a
+# The growpart and pvresize steps cover the other case, where the virtual disk
+# itself was enlarged after the partition was created (e.g. a clone resized
+# beyond its template). Every step is a no-op once the disk is fully used, so
+# this is safe on a node that is already grown (e.g. the control plane). Only
+# the standard Ubuntu layout (root on a single-PV LVM volume group, PV on a
 # partition) is handled; anything else is skipped with a message, never failed.
 
 - name: Install LVM and partition-growing tools
