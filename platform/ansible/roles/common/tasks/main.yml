@@ -4,6 +4,9 @@
     update_cache: yes
   when: ansible_os_family == "Debian"
 
+- name: Grow the root volume to fill the disk
+  ansible.builtin.include_tasks: grow_root_volume.yml
+
 - name: Allow run sudo commands without password
   community.general.sudoers:
     name: admin_role
