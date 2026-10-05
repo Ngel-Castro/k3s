@@ -1,7 +1,7 @@
 ---
 - name: Download and install K3s
   ansible.builtin.shell: |
-    curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server --disable=traefik" sh -s -
+    curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="{{ k3s_version }}" INSTALL_K3S_EXEC="server --disable=traefik" sh -s -
   args:
     creates: /usr/local/bin/k3s
 

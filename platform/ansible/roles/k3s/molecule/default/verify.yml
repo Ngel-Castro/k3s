@@ -23,6 +23,16 @@
         that: k3s_unit.stat.exists
         fail_msg: "k3s.service unit not found"
 
+    - name: Read installed k3s version
+      ansible.builtin.command: /usr/local/bin/k3s --version
+      register: k3s_version_out
+      changed_when: false
+
+    - name: Assert the installed k3s matches the pinned version
+      ansible.builtin.assert:
+        that: k3s_version in k3s_version_out.stdout
+        fail_msg: "k3s is not the pinned {{ k3s_version }}: {{ k3s_version_out.stdout }}"
+
     - name: Gather service facts
       ansible.builtin.service_facts:
 

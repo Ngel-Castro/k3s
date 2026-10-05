@@ -1,0 +1,13 @@
+---
+# K3s release installed by this role (passed to the installer as INSTALL_K3S_VERSION).
+#
+# Pinned deliberately: without it get.k3s.io installs the CURRENT stable release,
+# so a node (re)built later than the control plane lands on a newer minor version
+# than the API server. Kubernetes does not support a kubelet newer than the API
+# server, and in practice (2026-10-04: control plane v1.33.5, rebuilt agent
+# v1.36.5) the agent flapped NotReady and evicted CI pods.
+#
+# Keep this equal to the control plane's version (`kubectl get nodes`) and keep
+# it identical in the k3s and k3s-agent roles. Upgrade the control plane first,
+# one minor version at a time, then raise this.
+k3s_version: "v1.33.5+k3s1"
