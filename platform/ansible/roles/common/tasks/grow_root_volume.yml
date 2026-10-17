@@ -50,10 +50,13 @@
         root_lv_name: "{{ root_lv.stdout.split()[1] }}"
         root_pv: "{{ root_pvs.stdout | trim }}"
       block:
+        # -d (--nodeps): without it lsblk also lists the PV's children (the root
+        # LV), whose PKNAME is the partition itself, so the output is
+        # "sda\nsda3 3" and the partition number comes out as "sda3".
         - name: Find the disk and partition number of the physical volume
           ansible.builtin.shell: |
             set -o pipefail
-            echo "$(lsblk -no PKNAME {{ root_pv }}) $(cat /sys/class/block/$(basename {{ root_pv }})/partition)"
+            echo "$(lsblk -ndo PKNAME {{ root_pv }}) $(cat /sys/class/block/$(basename {{ root_pv }})/partition)"
           args:
             executable: /bin/bash
           register: root_pv_disk
