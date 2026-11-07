@@ -1,0 +1,20 @@
+---
+- name: Create the drop-in directory for {{ data_disk_unit }}
+  ansible.builtin.file:
+    path: /etc/systemd/system/{{ data_disk_unit }}.service.d
+    state: directory
+    mode: "0755"
+
+- name: Require the mount for {{ data_disk_unit }}
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/{{ data_disk_unit }}.service.d/10-data-disk.conf
+    content: |
+      [Unit]
+      RequiresMountsFor={{ data_disk_mount }}
+    mode: "0644"
+  register: data_disk_dropin
+
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: data_disk_dropin is changed

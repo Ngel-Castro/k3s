@@ -1,0 +1,12 @@
+---
+# Format and mount the VM's data disk at /var/lib/rancher, before K3s installs.
+#
+# The filesystem is ext4 on the whole disk (no partition table), so growing the
+# disk in Proxmox and running this role again grows the filesystem online.
+# Idempotent: nothing changes once the disk is formatted, mounted and full-size.
+# Never reformats a disk that holds another filesystem, and never mounts over
+# K3s data already on the root disk.
+
+- name: Mount the data disk
+  ansible.builtin.include_tasks: data_disk.yml
+  when: k3s_data_disk_gb | int > 0

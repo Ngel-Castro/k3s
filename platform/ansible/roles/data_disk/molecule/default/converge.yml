@@ -1,0 +1,11 @@
+---
+- name: Converge
+  hosts: all
+  become: true
+  tasks:
+    - name: Mount the data disk
+      ansible.builtin.include_role:
+        name: data_disk
+      vars:
+        k3s_data_disk_gb: 1
+        data_disk_device: /dev/loop21
