@@ -14,6 +14,13 @@ variable "vms" {
         vmid            = optional(number, null)
         gw              = optional(string, null)
         vlan_tag        = optional(number, 3)
+        # Where the cloud-init drive lives. vm_qemu_multiple 0.0.4+ defaults it to "local"
+        # (0.0.3 put it on `storage`), so callers that want it on the VM's storage set it.
+        cloudinit_storage = optional(string, "local")
+        # A second disk (scsi1) for data that grows. 0 means none. The guest formats and
+        # mounts it (roles/data_disk).
+        data_disk_size    = optional(number, 0)
+        data_disk_storage = optional(string, null)
     }))
     default = [
         {
