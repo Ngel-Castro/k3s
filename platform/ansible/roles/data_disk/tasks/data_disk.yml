@@ -1,0 +1,124 @@
+---
+- name: Find a disk already labelled for this role
+  ansible.builtin.command: blkid -L {{ data_disk_label }}
+  register: data_disk_labelled
+  changed_when: false
+  failed_when: data_disk_labelled.rc not in [0, 2]
+  when: data_disk_device | length == 0
+
+- name: Look for Proxmox's second disk by its by-id name
+  ansible.builtin.command: readlink -f {{ data_disk_by_id }}
+  register: data_disk_byid
+  changed_when: false
+  failed_when: false
+  when: data_disk_device | length == 0
+
+- name: List the whole disks that are candidates
+  ansible.builtin.set_fact:
+    data_disk_candidates: >-
+      {{ ansible_facts.devices | dict2items
+         | selectattr('key', 'match', '^(sd|vd|xvd|nvme)')
+         | selectattr('value.partitions', 'equalto', {})
+         | selectattr('value.holders', 'equalto', [])
+         | map(attribute='key') | map('regex_replace', '^', '/dev/') | list }}
+  when: data_disk_device | length == 0
+
+- name: Probe the candidates for a filesystem signature
+  ansible.builtin.command: blkid -p {{ item }}
+  register: data_disk_probe
+  changed_when: false
+  failed_when: false
+  loop: "{{ data_disk_candidates | default([]) }}"
+  when: data_disk_device | length == 0
+
+- name: Choose the data disk
+  ansible.builtin.set_fact:
+    data_disk_dev: >-
+      {{ data_disk_device if data_disk_device | length > 0 else
+         (data_disk_labelled.stdout | trim if data_disk_labelled.rc == 0 else
+          (data_disk_byid.stdout | trim if (data_disk_byid.rc | default(1)) == 0 and (data_disk_byid.stdout | trim | length) > 0 else
+           (data_disk_blank | first if data_disk_blank | length == 1 else ''))) }}
+  vars:
+    data_disk_blank: >-
+      {{ data_disk_probe.results | default([]) | selectattr('rc', 'equalto', 2) | map(attribute='item') | list }}
+
+- name: Fail when there is no data disk to use
+  ansible.builtin.fail:
+    msg: >-
+      This VM has no data disk to mount at {{ data_disk_mount }} ({{ k3s_data_disk_gb }} GB was asked for).
+      Looked for a disk labelled {{ data_disk_label }}, {{ data_disk_by_id }}, and one blank whole disk.
+      Is the k3s release older than the data-disk support? The VM was created without scsi1.
+  when: data_disk_dev | length == 0
+
+- name: Check the data disk is there
+  ansible.builtin.stat:
+    path: "{{ data_disk_dev }}"
+  register: data_disk_stat
+
+- name: Fail when the data disk is not there
+  ansible.builtin.fail:
+    msg: "The data disk {{ data_disk_dev }} does not exist on this VM."
+  when: not data_disk_stat.stat.exists
+
+- name: See what is mounted at the mount point
+  ansible.builtin.command: findmnt -n -o SOURCE {{ data_disk_mount }}
+  register: data_disk_mounted
+  changed_when: false
+  failed_when: data_disk_mounted.rc not in [0, 1]
+
+- name: Fail when something else is mounted there
+  ansible.builtin.fail:
+    msg: "{{ data_disk_mount }} is already mounted from {{ data_disk_mounted.stdout }}, not from {{ data_disk_dev }}."
+  when:
+    - data_disk_mounted.rc == 0
+    - data_disk_mounted.stdout | trim != data_disk_dev
+
+- name: Check for K3s data already on the root disk
+  ansible.builtin.stat:
+    path: "{{ data_disk_mount }}/k3s"
+  register: data_disk_existing
+  when: data_disk_mounted.rc != 0
+
+- name: Refuse to hide existing K3s data under a mount
+  ansible.builtin.fail:
+    msg: >-
+      {{ data_disk_mount }}/k3s already exists on the root disk. Mounting the data disk there would hide it,
+      and moving it is not done by this role. Leave this VM as it is.
+  when:
+    - data_disk_mounted.rc != 0
+    - data_disk_existing.stat.exists
+
+- name: Create the mount point
+  ansible.builtin.file:
+    path: "{{ data_disk_mount }}"
+    state: directory
+    mode: "0755"
+
+- name: Put ext4 on the disk, or grow the filesystem it has
+  community.general.filesystem:
+    fstype: ext4
+    dev: "{{ data_disk_dev }}"
+    opts: "-L {{ data_disk_label }}"
+    resizefs: true
+    force: false
+
+- name: Read the filesystem's UUID
+  ansible.builtin.command: blkid -s UUID -o value {{ data_disk_dev }}
+  register: data_disk_uuid
+  changed_when: false
+
+- name: Mount the data disk and record it in fstab
+  ansible.posix.mount:
+    path: "{{ data_disk_mount }}"
+    src: "UUID={{ data_disk_uuid.stdout | trim }}"
+    fstype: ext4
+    opts: defaults,nofail
+    state: mounted
+
+# nofail keeps a VM with a missing disk bootable; this keeps K3s from starting
+# on the root disk instead of the data disk.
+- name: Make K3s wait for the mount
+  ansible.builtin.include_tasks: dropin.yml
+  loop: "{{ data_disk_units }}"
+  loop_control:
+    loop_var: data_disk_unit

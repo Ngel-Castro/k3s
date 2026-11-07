@@ -1,0 +1,50 @@
+---
+# Three loop devices (the kernel is shared with the Docker host, so a loop device
+# left by an earlier run is detached first): 21 is the data disk, 22 already holds an xfs filesystem, 23 stays blank.
+- name: Prepare
+  hosts: all
+  become: true
+  tasks:
+    - name: Install the filesystem tools
+      ansible.builtin.apt:
+        name:
+          - e2fsprogs
+          - xfsprogs
+          - util-linux
+        state: present
+        update_cache: true
+
+    - name: Make sure the loop control device exists
+      ansible.builtin.command: mknod /dev/loop-control c 10 237
+      args:
+        creates: /dev/loop-control
+
+    - name: Create the backing files
+      ansible.builtin.command: truncate -s 1G /var/tmp/disk{{ item }}.img
+      args:
+        creates: /var/tmp/disk{{ item }}.img
+      loop: [1, 2, 3]
+
+    - name: Make sure the loop device nodes exist
+      ansible.builtin.command: mknod /dev/loop{{ 20 + item | int }} b 7 {{ 20 + item | int }}
+      args:
+        creates: /dev/loop{{ 20 + item | int }}
+      loop: [1, 2, 3]
+
+    - name: Detach loop devices a previous run left in the shared kernel
+      ansible.builtin.command: losetup -d /dev/loop{{ 20 + item | int }}
+      failed_when: false
+      changed_when: false
+      loop: [1, 2, 3]
+
+    - name: Attach the backing files
+      ansible.builtin.command: losetup /dev/loop{{ 20 + item | int }} /var/tmp/disk{{ item }}.img
+      register: prepare_losetup
+      failed_when: prepare_losetup.rc != 0 and 'already' not in prepare_losetup.stderr
+      changed_when: prepare_losetup.rc == 0
+      loop: [1, 2, 3]
+
+    - name: Put an xfs filesystem on the second device
+      community.general.filesystem:
+        fstype: xfs
+        dev: /dev/loop22

@@ -4,6 +4,7 @@
   become: yes
   roles:
     - common
+    - data_disk
     - k3s
 
 - name: Provision a K3s agent node
@@ -11,4 +12,5 @@
   become: yes
   roles:
     - common
+    - data_disk
     - k3s-agent

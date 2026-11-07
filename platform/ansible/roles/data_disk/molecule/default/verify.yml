@@ -1,0 +1,165 @@
+---
+- name: Verify
+  hosts: all
+  become: true
+  tasks:
+    - name: Read the mount
+      ansible.builtin.command: findmnt -n -o SOURCE,FSTYPE /var/lib/rancher
+      register: verify_mount
+      changed_when: false
+
+    - name: The data disk is mounted at /var/lib/rancher as ext4
+      ansible.builtin.assert:
+        that: verify_mount.stdout.split() == ['/dev/loop21', 'ext4']
+
+    - name: Read the label
+      ansible.builtin.command: blkid -s LABEL -o value /dev/loop21
+      register: verify_label
+      changed_when: false
+
+    - name: The filesystem is labelled k3s-data
+      ansible.builtin.assert:
+        that: verify_label.stdout == 'k3s-data'
+
+    - name: Read fstab
+      ansible.builtin.slurp:
+        src: /etc/fstab
+      register: verify_fstab
+
+    - name: fstab mounts it by UUID with nofail, once
+      ansible.builtin.assert:
+        that:
+          - (verify_fstab.content | b64decode).splitlines() | select('match', '^UUID=\S+\s+/var/lib/rancher\s+ext4\s+defaults,nofail') | list | length == 1
+
+    - name: K3s is told to wait for the mount
+      ansible.builtin.slurp:
+        src: /etc/systemd/system/{{ item }}.service.d/10-data-disk.conf
+      register: verify_dropin
+      loop: [k3s, k3s-agent]
+
+    - name: Both drop-ins require the mount
+      ansible.builtin.assert:
+        that: "'RequiresMountsFor=/var/lib/rancher' in (item.content | b64decode)"
+      loop: "{{ verify_dropin.results }}"
+
+    # --- refusals: nothing is formatted, mounted or overwritten -------------
+    - name: A device that already holds another filesystem is refused and untouched
+      block:
+        - name: Run the role on the xfs device
+          ansible.builtin.include_role:
+            name: data_disk
+          vars:
+            k3s_data_disk_gb: 1
+            data_disk_device: /dev/loop22
+            data_disk_mount: /mnt/refused
+        - name: Not reached
+          ansible.builtin.fail:
+            msg: the role must refuse a disk with another filesystem
+      rescue:
+        - name: Read the xfs device's type
+          ansible.builtin.command: blkid -s TYPE -o value /dev/loop22
+          register: verify_xfs
+          changed_when: false
+        - name: Still xfs
+          ansible.builtin.assert:
+            that: verify_xfs.stdout == 'xfs'
+
+    - name: Disabled means nothing changes
+      ansible.builtin.include_role:
+        name: data_disk
+      vars:
+        k3s_data_disk_gb: 0
+        data_disk_device: /dev/loop22
+        data_disk_mount: /mnt/disabled
+
+    - name: Nothing was mounted at the disabled path
+      ansible.builtin.command: findmnt -n /mnt/disabled
+      register: verify_disabled
+      failed_when: verify_disabled.rc == 0
+      changed_when: false
+
+    - name: A device that is not there is a loud failure
+      block:
+        - name: Run the role on a missing device
+          ansible.builtin.include_role:
+            name: data_disk
+          vars:
+            k3s_data_disk_gb: 1
+            data_disk_device: /dev/does-not-exist
+            data_disk_mount: /mnt/missing
+        - name: Not reached
+          ansible.builtin.fail:
+            msg: the role must fail on a missing device
+      rescue:
+        - name: The message says the VM has no such disk
+          ansible.builtin.assert:
+            that: "'data disk' in ansible_failed_result.msg"
+
+    - name: With no device given and none to find the role fails and says why
+      block:
+        - name: Run the role with detection only
+          ansible.builtin.include_role:
+            name: data_disk
+          vars:
+            k3s_data_disk_gb: 1
+            data_disk_mount: /mnt/none
+            data_disk_label: no-such-label
+        - name: Not reached
+          ansible.builtin.fail:
+            msg: the role must fail when it finds no data disk
+      rescue:
+        - name: The message points at the k3s release
+          ansible.builtin.assert:
+            that:
+              - "'no data disk' in ansible_failed_result.msg"
+              - "'older than the data-disk support' in ansible_failed_result.msg"
+
+    # --- K3s data already on the root disk is never hidden by a mount -------
+    - name: Existing K3s data on root is refused
+      block:
+        - name: Create a fake K3s data directory under a new mount point
+          ansible.builtin.file:
+            path: /mnt/has-data/k3s
+            state: directory
+            mode: "0755"
+        - name: Run the role for that mount point on the blank second disk
+          ansible.builtin.include_role:
+            name: data_disk
+          vars:
+            k3s_data_disk_gb: 1
+            data_disk_device: /dev/loop23
+            data_disk_mount: /mnt/has-data
+        - name: Not reached
+          ansible.builtin.fail:
+            msg: the role must refuse to mount over existing K3s data
+      rescue:
+        - name: The refusal names the directory
+          ansible.builtin.assert:
+            that: "'already exists' in ansible_failed_result.msg"
+
+    # --- growing: enlarge the disk, run again, the filesystem follows -------
+    - name: Read the size of the filesystem
+      ansible.builtin.command: df -B1 --output=size /var/lib/rancher
+      register: verify_before
+      changed_when: false
+
+    - name: Enlarge the backing file and the loop device
+      ansible.builtin.shell: |
+        truncate -s 2G /var/tmp/disk1.img && losetup -c /dev/loop21
+      changed_when: true
+
+    - name: Run the role again
+      ansible.builtin.include_role:
+        name: data_disk
+      vars:
+        k3s_data_disk_gb: 2
+        data_disk_device: /dev/loop21
+
+    - name: Read the size again
+      ansible.builtin.command: df -B1 --output=size /var/lib/rancher
+      register: verify_after
+      changed_when: false
+
+    - name: The filesystem grew
+      ansible.builtin.assert:
+        that: (verify_after.stdout_lines[-1] | int) > (verify_before.stdout_lines[-1] | int) * 1.5
